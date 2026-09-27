@@ -1,7 +1,7 @@
 const { requireRole } = require('../../lib/session');
 const { supabaseAdmin } = require('../../lib/supabaseAdmin');
 const { applyOutcome } = require('../../lib/orderOutcome');
-const { cycleDaysFor, todayISO, tomorrowISO, ok, badRequest, unauthorized, serverError, parsePathParams } = require('../../lib/util');
+const { cycleDaysFor, todayISO, tomorrowISO, ok, badRequest, unauthorized, serverError, parsePathParams, DEFAULT_FARMERS } = require('../../lib/util');
 
 module.exports = async (req, res) => {
   const session = requireRole(req, 'admin');
@@ -59,6 +59,65 @@ module.exports = async (req, res) => {
         if (!targetId) return badRequest(res, 'Product ID is required');
         const { error } = await db.from('products').delete().eq('id', targetId);
         if (error) throw error;
+        return ok(res, { deleted: true });
+      }
+    }
+
+    // ── Farmer Stories & PDFs ───────────────────────────────────────
+    if (resource === 'farmers') {
+      if (req.method === 'GET') {
+        let farmers = DEFAULT_FARMERS;
+        try {
+          const { data, error } = await db.from('farmer_stories').select('*').order('created_at', { ascending: false });
+          if (!error && data && data.length > 0) farmers = data;
+        } catch (e) {
+          // Fallback to DEFAULT_FARMERS if table not created
+        }
+        return ok(res, { farmers });
+      }
+      if (req.method === 'POST') {
+        const { farmer_name, village, story, pdf_url, farmer_code, image_url } = req.body || {};
+        if (!farmer_name || !farmer_code) return badRequest(res, 'Farmer name and Farmer code are required');
+        const newFarmer = {
+          id: 'farmer-' + Date.now(),
+          farmer_code,
+          farmer_name,
+          village: village || 'Telangana',
+          story: story || 'Fresh farm milk sourced with 100% natural organic feed.',
+          pdf_url: pdf_url || 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+          image_url: image_url || 'https://images.unsplash.com/photo-1595855759920-86582396756a?w=500',
+          created_at: new Date().toISOString()
+        };
+        try {
+          const { data, error } = await db.from('farmer_stories').insert(newFarmer).select().single();
+          if (!error && data) return ok(res, { farmer: data });
+        } catch (e) {
+          // Ignore table missing error
+        }
+        DEFAULT_FARMERS.unshift(newFarmer);
+        return ok(res, { farmer: newFarmer });
+      }
+      if (req.method === 'PUT') {
+        if (!targetId) return badRequest(res, 'Farmer ID is required');
+        const { id: _, ...patch } = req.body || {};
+        try {
+          const { data, error } = await db.from('farmer_stories').update(patch).eq('id', targetId).select().single();
+          if (!error && data) return ok(res, { farmer: data });
+        } catch (e) {}
+        const idx = DEFAULT_FARMERS.findIndex(f => f.id === targetId || f.farmer_code === targetId);
+        if (idx !== -1) {
+          DEFAULT_FARMERS[idx] = { ...DEFAULT_FARMERS[idx], ...patch };
+          return ok(res, { farmer: DEFAULT_FARMERS[idx] });
+        }
+        return ok(res, { updated: true });
+      }
+      if (req.method === 'DELETE') {
+        if (!targetId) return badRequest(res, 'Farmer ID is required');
+        try {
+          await db.from('farmer_stories').delete().eq('id', targetId);
+        } catch (e) {}
+        const idx = DEFAULT_FARMERS.findIndex(f => f.id === targetId || f.farmer_code === targetId);
+        if (idx !== -1) DEFAULT_FARMERS.splice(idx, 1);
         return ok(res, { deleted: true });
       }
     }

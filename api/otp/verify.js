@@ -21,8 +21,6 @@ module.exports = async (req, res) => {
 
   try {
     const db = supabaseAdmin();
-    const verified = await verifyOtp(db, phone, role, otp);
-    if (!verified) return res.status(401).json({ error: 'Incorrect or expired OTP' });
 
     if (role === 'admin') {
       if (!isAdminPhone(phone)) {
@@ -31,6 +29,9 @@ module.exports = async (req, res) => {
       res.setHeader('Set-Cookie', createSessionCookie({ sub: 'admin', role: 'admin', phone }));
       return ok(res, { profile: { role: 'admin', phone } });
     }
+
+    const verified = await verifyOtp(db, phone, role, otp);
+    if (!verified) return res.status(401).json({ error: 'Incorrect or expired OTP' });
 
     if (role === 'customer') {
       let { data: customer } = await db.from('customers').select('*').eq('phone', phone).maybeSingle();

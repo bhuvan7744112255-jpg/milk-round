@@ -1,7 +1,7 @@
 const { requireRole } = require('../../lib/session');
 const { supabaseAdmin } = require('../../lib/supabaseAdmin');
 const { confirmPayment } = require('../../lib/razorpay');
-const { haversineKm, cycleDaysFor, todayISO, ok, badRequest, unauthorized, serverError, parsePathParams } = require('../../lib/util');
+const { haversineKm, cycleDaysFor, todayISO, ok, badRequest, unauthorized, serverError, parsePathParams, DEFAULT_FARMERS } = require('../../lib/util');
 
 async function chargeAmount(db, session, amount, payment_method, proof, note) {
   if (payment_method === 'wallet') {
@@ -107,11 +107,18 @@ module.exports = async (req, res) => {
         activeZone = allZones[0];
       }
 
+      let farmersList = DEFAULT_FARMERS;
+      try {
+        const { data: fData } = await db.from('farmer_stories').select('*');
+        if (fData && fData.length > 0) farmersList = fData;
+      } catch (e) {}
+
       if (!activeZone) {
         return ok(res, {
           zone: null,
           zones: allZones || [],
           products: products || [],
+          farmers: farmersList,
           instantAvailable: false,
           stockByProduct: {},
           heroVideos,
@@ -130,10 +137,21 @@ module.exports = async (req, res) => {
         zone: activeZone,
         zones: allZones || [],
         products: products || [],
+        farmers: farmersList,
         instantAvailable,
         stockByProduct: Object.fromEntries((todaysStock || []).map((r) => [r.product_id, r.qty_available])),
         heroVideos,
       });
+    }
+
+    // ── /api/customer/farmers ─────────────────────────────────────────
+    if (action === 'farmers') {
+      let farmersList = DEFAULT_FARMERS;
+      try {
+        const { data: fData } = await db.from('farmer_stories').select('*');
+        if (fData && fData.length > 0) farmersList = fData;
+      } catch (e) {}
+      return ok(res, { farmers: farmersList });
     }
 
     // ── /api/customer/subscription ────────────────────────────────────

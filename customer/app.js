@@ -96,13 +96,27 @@ async function renderHome(screen) {
   state.home = data;
   screen.innerHTML = '';
 
+  state.activeCategory = state.activeCategory || 'all';
+
   const tiles = el('div', { class: 'tile-grid' }, [
-    tile('milk', 'Milk', ICONS.milk, true),
-    tile('veg', 'Vegetables', ICONS.veg, false),
-    tile('grocery', 'Groceries', ICONS.basket, false),
-    tile('organic', 'Organic', ICONS.leaf, false),
+    tile('all', 'All Items', ICONS.milk, state.activeCategory === 'all', () => { state.activeCategory = 'all'; renderApp(); }),
+    tile('milk', 'Milk', ICONS.milk, state.activeCategory === 'milk', () => { state.activeCategory = 'milk'; renderApp(); }),
+    tile('veg', 'Vegetables', ICONS.veg, state.activeCategory === 'veg', () => { state.activeCategory = 'veg'; renderApp(); }),
+    tile('grocery', 'Groceries', ICONS.basket, state.activeCategory === 'grocery', () => { state.activeCategory = 'grocery'; renderApp(); }),
   ]);
   screen.appendChild(tiles);
+
+  // 🌾 Tell Us Where & When (Know Your Farmer & Source Card)
+  const farmerCard = el('div', { class: 'card tight', style: 'background:var(--accent-soft);border:1px solid var(--accent);margin-bottom:14px;' }, [
+    el('div', { style: 'display:flex;justify-content:space-between;align-items:center;' }, [
+      el('div', {}, [
+        el('h3', { style: 'margin:0;font-size:15px;' }, '🌾 Tell Us Where & When (Know Your Farmer)'),
+        el('p', { class: 'muted small', style: 'margin:2px 0 0;' }, 'Scan product QR or select farmer to read story & view lab test PDF!'),
+      ]),
+      el('button', { class: 'btn btn-primary btn-sm', onclick: () => openFarmerModal(data.farmers) }, '🔍 View Stories'),
+    ]),
+  ]);
+  screen.appendChild(farmerCard);
 
   if (!data.zone) {
     screen.appendChild(el('div', { class: 'card tight', style: 'background:var(--amber-soft);border-color:var(--amber);margin-bottom:14px;' }, [
@@ -136,15 +150,32 @@ async function renderHome(screen) {
     ]));
   }
 
+  const filteredProducts = (data.products || []).filter(p => {
+    if (state.activeCategory === 'all') return true;
+    const cat = (p.category || p.name || '').toLowerCase();
+    if (state.activeCategory === 'milk') return cat.includes('milk') || cat.includes('curd') || cat.includes('ghee') || cat.includes('paneer');
+    if (state.activeCategory === 'veg') return cat.includes('veg') || cat.includes('tomato') || cat.includes('onion') || cat.includes('spinach');
+    if (state.activeCategory === 'grocery') return cat.includes('grocery') || cat.includes('oil') || cat.includes('rice') || cat.includes('dal');
+    return true;
+  });
+
   const list = el('div', { class: 'card' }, [el('h3', { style: 'margin-bottom:10px;' }, 'Farm Fresh Products')]);
-  (data.products || []).forEach((p) => {
+  filteredProducts.forEach((p) => {
     const price = p.discount_active ? p.price * (1 - p.discount_pct / 100) : p.price;
-    const row = el('div', { class: 'list-row' }, [
-      el('div', {}, [
-        el('div', { style: 'font-weight:600;' }, `${p.name} · ${p.pack_size || ''}`),
-        el('div', { class: 'muted small' }, p.discount_active ? el('span', {}, [el('s', {}, rupees(p.price)), ' ', rupees(price)]) : rupees(price))
+    const farmerInfo = (data.farmers || [])[0];
+    const row = el('div', { class: 'list-row', style: 'flex-direction:column;align-items:flex-start;gap:6px;' }, [
+      el('div', { style: 'display:flex;justify-content:space-between;width:100%;align-items:center;' }, [
+        el('div', {}, [
+          el('div', { style: 'font-weight:600;' }, `${p.name} · ${p.pack_size || ''}`),
+          el('div', { class: 'muted small' }, p.discount_active ? el('span', {}, [el('s', {}, rupees(p.price)), ' ', rupees(price)]) : rupees(price))
+        ]),
+        el('button', { class: 'btn btn-outline btn-sm', onclick: () => { state.tab = 'sub'; renderApp(); } }, 'Subscribe'),
       ]),
-      el('button', { class: 'btn btn-outline btn-sm', onclick: () => { state.tab = 'sub'; renderApp(); } }, 'Subscribe'),
+      farmerInfo ? el('button', {
+        class: 'btn btn-outline btn-sm',
+        style: 'font-size:11px;padding:3px 8px;margin-top:2px;border-color:var(--accent);color:var(--accent);',
+        onclick: () => openFarmerModal(data.farmers, farmerInfo.farmer_code)
+      }, `👨‍🌾 Sourced from: ${farmerInfo.farmer_name} (View Story & PDF)`) : null
     ]);
     list.appendChild(row);
   });
@@ -175,15 +206,101 @@ async function renderHome(screen) {
     card.appendChild(orderBtn);
     screen.appendChild(card);
   }
+
+  // Check URL param for ?farmer=FARMER-01
+  const urlParams = new URLSearchParams(window.location.search);
+  const paramFarmer = urlParams.get('farmer');
+  if (paramFarmer && data.farmers) {
+    openFarmerModal(data.farmers, paramFarmer);
+  }
 }
 
-function tile(id, label, icon, active) {
-  const t = el('div', { class: 'tile' + (active ? ' active' : ' locked') }, [
+function tile(id, label, icon, active, onClick) {
+  const t = el('div', { class: 'tile' + (active ? ' active' : '') }, [
     el('div', { class: 'tile-icon', html: icon }),
     el('span', {}, label),
   ]);
-  t.onclick = () => toast(active ? `${label} selected` : `${label} — coming soon`);
+  t.onclick = onClick || (() => toast(`${label} selected`));
   return t;
+}
+
+function openFarmerModal(farmersList, selectedCode) {
+  const farmers = farmersList || state.home?.farmers || [];
+  const overlay = el('div', { class: 'overlay' });
+  const sheet = el('div', { class: 'sheet', style: 'max-height:85vh;overflow-y:auto;' });
+
+  let currentFarmer = farmers.find(f => (f.farmer_code || '').toUpperCase() === (selectedCode || '').toUpperCase()) || farmers[0];
+
+  function drawModal() {
+    sheet.innerHTML = '';
+    const header = el('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;' }, [
+      el('h3', { style: 'margin:0;' }, '🌾 Tell Us Where & When'),
+      el('button', { class: 'btn btn-outline btn-sm', onclick: () => overlay.remove() }, '✕ Close')
+    ]);
+
+    const codeSearchRow = el('div', { style: 'display:flex;gap:8px;margin-bottom:14px;' });
+    const codeInput = el('input', { type: 'text', placeholder: 'Enter QR / Farmer Code (e.g. FARMER-01)', value: selectedCode || '', style: 'flex:1;' });
+    const searchBtn = el('button', { class: 'btn btn-primary btn-sm' }, 'Verify Code');
+
+    searchBtn.onclick = () => {
+      const query = codeInput.value.trim().toUpperCase();
+      const found = farmers.find(f => (f.farmer_code || '').toUpperCase() === query || f.id === query);
+      if (found) {
+        currentFarmer = found;
+        drawModal();
+        toast(`Loaded story for ${found.farmer_name}`);
+      } else {
+        toast(`Code "${query}" not found. Showing default farmer story.`, true);
+      }
+    };
+    codeSearchRow.append(codeInput, searchBtn);
+
+    const farmerSelectRow = el('div', { style: 'margin-bottom:14px;' }, [
+      el('label', { class: 'small muted', style: 'display:block;margin-bottom:4px;' }, 'SELECT FARMER / MILKMAN STORY:'),
+      el('select', {
+        onchange: (e) => {
+          const selected = farmers.find(f => f.id === e.target.value);
+          if (selected) {
+            currentFarmer = selected;
+            drawModal();
+          }
+        }
+      }, farmers.map(f => el('option', { value: f.id, selected: currentFarmer && currentFarmer.id === f.id ? 'selected' : null }, `${f.farmer_name} (${f.village || 'Farm'})`)))
+    ]);
+
+    const farmerCard = el('div', { class: 'card', style: 'background:var(--card-bg);margin-top:10px;' });
+    if (currentFarmer) {
+      farmerCard.append(
+        el('div', { style: 'display:flex;gap:12px;align-items:center;' }, [
+          el('img', { src: currentFarmer.image_url || 'https://images.unsplash.com/photo-1595855759920-86582396756a?w=200', style: 'width:64px;height:64px;border-radius:50%;object-fit:cover;' }),
+          el('div', {}, [
+            el('h4', { style: 'margin:0;' }, currentFarmer.farmer_name),
+            el('span', { class: 'badge badge-accent', style: 'margin-top:2px;' }, `Code: ${currentFarmer.farmer_code || 'FARMER-01'}`),
+            el('p', { class: 'muted small', style: 'margin:2px 0 0;' }, `📍 ${currentFarmer.village || 'Organic Farm'}`),
+          ])
+        ]),
+        el('p', { style: 'margin-top:12px;line-height:1.5;font-size:14px;' }, currentFarmer.story),
+        el('div', { class: 'card tight', style: 'background:var(--accent-soft);margin-top:10px;' }, [
+          el('div', { style: 'font-weight:600;font-size:13px;' }, '🛡️ Trust & Purity Verification'),
+          el('p', { class: 'muted small', style: 'margin:2px 0 0;' }, '100% Organic Fodder · Zero Preservatives · Milked fresh at 4:30 AM')
+        ]),
+        currentFarmer.pdf_url ? el('a', {
+          href: currentFarmer.pdf_url,
+          target: '_blank',
+          class: 'btn btn-primary',
+          style: 'margin-top:14px;display:block;text-align:center;text-decoration:none;'
+        }, '📄 View / Download Farmer Story & Lab Certificate PDF') : null
+      );
+    } else {
+      farmerCard.append(el('p', { class: 'muted' }, 'No farmer stories found.'));
+    }
+
+    sheet.append(header, codeSearchRow, farmerSelectRow, farmerCard);
+  }
+
+  drawModal();
+  overlay.appendChild(sheet);
+  document.body.appendChild(overlay);
 }
 
 async function placeInstantOrder(cart, products) {
