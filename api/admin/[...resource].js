@@ -1,17 +1,13 @@
 const { requireRole } = require('../../lib/session');
 const { supabaseAdmin } = require('../../lib/supabaseAdmin');
 const { applyOutcome } = require('../../lib/orderOutcome');
-const { cycleDaysFor, todayISO, tomorrowISO, ok, badRequest, unauthorized, serverError } = require('../../lib/util');
+const { cycleDaysFor, todayISO, tomorrowISO, ok, badRequest, unauthorized, serverError, parsePathParams } = require('../../lib/util');
 
 module.exports = async (req, res) => {
   const session = requireRole(req, 'admin');
   if (!session) return unauthorized(res);
   const db = supabaseAdmin();
-  const rawResource = req.query.resource;
-  const resourceParts = Array.isArray(rawResource)
-    ? rawResource
-    : (typeof rawResource === 'string' ? [rawResource] : []);
-  const [resource, id] = resourceParts;
+  const [resource, id] = parsePathParams(req, 'resource', '/api/admin/');
 
   try {
     // ── Zones ────────────────────────────────────────────────────────

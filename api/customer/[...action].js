@@ -1,7 +1,7 @@
 const { requireRole } = require('../../lib/session');
 const { supabaseAdmin } = require('../../lib/supabaseAdmin');
 const { confirmPayment } = require('../../lib/razorpay');
-const { cycleDaysFor, todayISO, ok, badRequest, unauthorized, serverError } = require('../../lib/util');
+const { cycleDaysFor, todayISO, ok, badRequest, unauthorized, serverError, parsePathParams } = require('../../lib/util');
 
 async function chargeAmount(db, session, amount, payment_method, proof, note) {
   if (payment_method === 'wallet') {
@@ -28,8 +28,7 @@ module.exports = async (req, res) => {
   const session = requireRole(req, 'customer');
   if (!session) return unauthorized(res);
   const db = supabaseAdmin();
-  const rawAction = req.query.action;
-  const action = Array.isArray(rawAction) ? rawAction[0] : (typeof rawAction === 'string' ? rawAction : '');
+  const action = parsePathParams(req, 'action', '/api/customer/')[0];
 
   try {
     // ── /api/customer/me ──────────────────────────────────────────────

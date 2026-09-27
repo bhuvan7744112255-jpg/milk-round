@@ -1,7 +1,7 @@
 const { requireRole } = require('../../lib/session');
 const { supabaseAdmin } = require('../../lib/supabaseAdmin');
 const { applyOutcome } = require('../../lib/orderOutcome');
-const { haversineKm, todayISO, ok, badRequest, unauthorized, serverError } = require('../../lib/util');
+const { haversineKm, todayISO, ok, badRequest, unauthorized, serverError, parsePathParams } = require('../../lib/util');
 
 const PAYOUT_PER_DELIVERY = Number(process.env.PARTNER_PAYOUT_PER_DELIVERY || 15);
 // ^ Not specified in the spec's business rules — a flat per-completed-stop
@@ -12,8 +12,7 @@ module.exports = async (req, res) => {
   const session = requireRole(req, 'partner');
   if (!session) return unauthorized(res);
   const db = supabaseAdmin();
-  const rawAction = req.query.action;
-  const action = Array.isArray(rawAction) ? rawAction[0] : (typeof rawAction === 'string' ? rawAction : '');
+  const action = parsePathParams(req, 'action', '/api/partner/')[0];
 
   try {
     // ── /api/partner/me ────────────────────────────────────────────────
