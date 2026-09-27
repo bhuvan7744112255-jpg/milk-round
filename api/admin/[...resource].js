@@ -7,7 +7,8 @@ module.exports = async (req, res) => {
   const session = requireRole(req, 'admin');
   if (!session) return unauthorized(res);
   const db = supabaseAdmin();
-  const [resource, id] = parsePathParams(req, 'resource', '/api/admin/');
+  const [resource, pathId] = parsePathParams(req, 'resource', '/api/admin/');
+  const targetId = pathId || req.query.id || (req.body && req.body.id);
 
   try {
     // ── Zones ────────────────────────────────────────────────────────
@@ -22,12 +23,15 @@ module.exports = async (req, res) => {
         return ok(res, { zone: data });
       }
       if (req.method === 'PUT') {
-        const { data, error } = await db.from('zones').update(req.body).eq('id', id).select().single();
+        if (!targetId) return badRequest(res, 'Zone ID is required');
+        const { id: _, ...patch } = req.body || {};
+        const { data, error } = await db.from('zones').update(patch).eq('id', targetId).select().single();
         if (error) throw error;
         return ok(res, { zone: data });
       }
       if (req.method === 'DELETE') {
-        const { error } = await db.from('zones').delete().eq('id', id);
+        if (!targetId) return badRequest(res, 'Zone ID is required');
+        const { error } = await db.from('zones').delete().eq('id', targetId);
         if (error) throw error;
         return ok(res, { deleted: true });
       }
@@ -45,12 +49,15 @@ module.exports = async (req, res) => {
         return ok(res, { product: data });
       }
       if (req.method === 'PUT') {
-        const { data, error } = await db.from('products').update(req.body).eq('id', id).select().single();
+        if (!targetId) return badRequest(res, 'Product ID is required');
+        const { id: _, ...patch } = req.body || {};
+        const { data, error } = await db.from('products').update(patch).eq('id', targetId).select().single();
         if (error) throw error;
         return ok(res, { product: data });
       }
       if (req.method === 'DELETE') {
-        const { error } = await db.from('products').delete().eq('id', id);
+        if (!targetId) return badRequest(res, 'Product ID is required');
+        const { error } = await db.from('products').delete().eq('id', targetId);
         if (error) throw error;
         return ok(res, { deleted: true });
       }
@@ -66,11 +73,16 @@ module.exports = async (req, res) => {
         return ok(res, { inventory: data || [] });
       }
       if (req.method === 'POST') {
-        const { zone_id, clear_all, date, product_id, qty_available } = req.body || {};
+        const { zone_id, clear_all, clear_product_id, date, product_id, qty_available } = req.body || {};
         if (!zone_id) return badRequest(res, 'zone_id required');
         const d = date || todayISO();
         if (clear_all) {
           const { error } = await db.from('inventory').update({ qty_available: 0 }).eq('zone_id', zone_id).eq('date', d);
+          if (error) throw error;
+          return ok(res, { cleared: true });
+        }
+        if (clear_product_id) {
+          const { error } = await db.from('inventory').update({ qty_available: 0 }).eq('zone_id', zone_id).eq('product_id', clear_product_id).eq('date', d);
           if (error) throw error;
           return ok(res, { cleared: true });
         }
@@ -85,7 +97,7 @@ module.exports = async (req, res) => {
       }
     }
 
-    // ── Subscribers (customer + subscription, source of truth for §5.6) ─
+    // ── Subscribers (customer + subscription) ───────────────────────
     if (resource === 'subscribers') {
       if (req.method === 'GET') {
         const { data } = await db
@@ -95,18 +107,18 @@ module.exports = async (req, res) => {
         return ok(res, { subscribers: data || [] });
       }
       if (req.method === 'POST') {
-        // Admin-added subscriber: find-or-create the customer, then create
-        // an Active subscription immediately (no payment flow here — this
-        // is an operational tool, billing is the admin's call).
         const { phone, name, zone_id, product_id, plan, qty_per_day } = req.body || {};
         if (!phone || !zone_id || !product_id || !plan || !qty_per_day) {
           return badRequest(res, 'phone, zone_id, product_id, plan, qty_per_day required');
         }
-        let { data: customer } = await db.from('customers').select('*').eq('phone', phone).maybeSingle();
+        const cleanPhone = String(phone).replace(/\D/g, '');
+        if (cleanPhone.length !== 10) return badRequest(res, 'Phone number must be 10 digits');
+
+        let { data: customer } = await db.from('customers').select('*').eq('phone', cleanPhone).maybeSingle();
         if (!customer) {
           const { data: created, error } = await db
             .from('customers')
-            .insert({ phone, name: name || null, zone_id })
+            .insert({ phone: cleanPhone, name: name || null, zone_id })
             .select()
             .single();
           if (error) throw error;
@@ -135,13 +147,15 @@ module.exports = async (req, res) => {
         return ok(res, { subscriber: sub, customer });
       }
       if (req.method === 'PUT') {
-        // id = subscription id. Body may include status/qty_per_day/plan/zone_id.
-        const { data, error } = await db.from('subscriptions').update(req.body).eq('id', id).select().single();
+        if (!targetId) return badRequest(res, 'Subscription ID required');
+        const { id: _, ...patch } = req.body || {};
+        const { data, error } = await db.from('subscriptions').update(patch).eq('id', targetId).select().single();
         if (error) throw error;
         return ok(res, { subscriber: data });
       }
       if (req.method === 'DELETE') {
-        const { error } = await db.from('subscriptions').delete().eq('id', id);
+        if (!targetId) return badRequest(res, 'Subscription ID required');
+        const { error } = await db.from('subscriptions').delete().eq('id', targetId);
         if (error) throw error;
         return ok(res, { deleted: true });
       }
@@ -154,17 +168,30 @@ module.exports = async (req, res) => {
         return ok(res, { partners: data || [] });
       }
       if (req.method === 'POST') {
-        const { data, error } = await db.from('delivery_partners').insert(req.body).select().single();
+        const { name, phone, zone_ids, status } = req.body || {};
+        const cleanPhone = String(phone || '').replace(/\D/g, '');
+        if (!name || cleanPhone.length !== 10) {
+          return badRequest(res, 'Name and valid 10-digit phone number are required');
+        }
+        const { data, error } = await db
+          .from('delivery_partners')
+          .insert({ name, phone: cleanPhone, zone_ids: zone_ids || [], status: status || 'active' })
+          .select()
+          .single();
         if (error) throw error;
         return ok(res, { partner: data });
       }
       if (req.method === 'PUT') {
-        const { data, error } = await db.from('delivery_partners').update(req.body).eq('id', id).select().single();
+        if (!targetId) return badRequest(res, 'Partner ID required');
+        const { id: _, ...patch } = req.body || {};
+        if (patch.phone) patch.phone = String(patch.phone).replace(/\D/g, '');
+        const { data, error } = await db.from('delivery_partners').update(patch).eq('id', targetId).select().single();
         if (error) throw error;
         return ok(res, { partner: data });
       }
       if (req.method === 'DELETE') {
-        const { error } = await db.from('delivery_partners').delete().eq('id', id);
+        if (!targetId) return badRequest(res, 'Partner ID required');
+        const { error } = await db.from('delivery_partners').delete().eq('id', targetId);
         if (error) throw error;
         return ok(res, { deleted: true });
       }
@@ -182,11 +209,12 @@ module.exports = async (req, res) => {
         return ok(res, { orders: data || [] });
       }
       if (req.method === 'PUT') {
+        if (!targetId) return badRequest(res, 'Order ID required');
         const { status, reason, items } = req.body || {};
         if (!['Delivered', 'Partially Delivered', 'Not Delivered'].includes(status)) {
           return badRequest(res, 'Invalid status');
         }
-        const { data: order } = await db.from('orders').select('*').eq('id', id).single();
+        const { data: order } = await db.from('orders').select('*').eq('id', targetId).single();
         if (!order) return badRequest(res, 'Order not found');
         await applyOutcome(db, { order, status, items, reason, deliveryPartnerId: order.delivery_partner_id });
         return ok(res, { updated: true });
@@ -258,10 +286,23 @@ module.exports = async (req, res) => {
       return ok(res, { exceptions: data || [] });
     }
 
-    // ── Today's Revenue & Orders summary (ONDs / PDs / revenue lost) ─
+    // ── Comprehensive Analytics Summary ─────────────────────────────
     if (resource === 'summary') {
       const date = req.query.date || todayISO();
-      const { data: orders } = await db.from('orders').select('*').eq('date', date);
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayISO = yesterday.toISOString().slice(0, 10);
+
+      const [
+        { data: orders },
+        { data: allCustomers },
+        { data: activeSubs }
+      ] = await Promise.all([
+        db.from('orders').select('*').eq('date', date),
+        db.from('customers').select('id, created_at'),
+        db.from('subscriptions').select('id, customer_id').eq('status', 'Active')
+      ]);
+
       let totalOrderValue = 0;
       let revenueLost = 0;
       let ond = 0;
@@ -277,18 +318,40 @@ module.exports = async (req, res) => {
           revenueLost += (o.items || []).filter((it) => !it.delivered).reduce((s, it) => s + it.price * it.qty, 0);
         }
       });
+
+      const totalOrdersCount = (orders || []).length;
+      const aov = totalOrdersCount > 0 ? Math.round((totalOrderValue / totalOrdersCount) * 100) / 100 : 0;
+
+      const customers = allCustomers || [];
+      const totalCustomers = customers.length;
+
+      const newCustomersToday = customers.filter((c) => c.created_at && c.created_at.slice(0, 10) === date).length;
+      const newCustomersYesterday = customers.filter((c) => c.created_at && c.created_at.slice(0, 10) === yesterdayISO).length;
+
+      const customersWithSubs = new Set((activeSubs || []).map((s) => s.customer_id));
+      const customersWithOrders = new Set((orders || []).map((o) => o.customer_id));
+      const convertedCustomersCount = customers.filter((c) => customersWithSubs.has(c.id) || customersWithOrders.has(c.id)).length;
+      const conversionRate = totalCustomers > 0 ? Math.round((convertedCustomersCount / totalCustomers) * 100) : 0;
+
       return ok(res, {
         date,
-        totalOrders: (orders || []).length,
+        totalOrders: totalOrdersCount,
         ond,
         pd,
         totalOrderValue: Math.round(totalOrderValue * 100) / 100,
         revenueLost: Math.round(revenueLost * 100) / 100,
         revenueRealized: Math.round((totalOrderValue - revenueLost) * 100) / 100,
+        aov,
+        totalCustomers,
+        newCustomersToday,
+        newCustomersYesterday,
+        convertedCustomersCount,
+        conversionRate,
+        activeSubscriptionsCount: (activeSubs || []).length,
       });
     }
 
-    // ── Simulated WhatsApp broadcast (§8: not yet wired to the real API) ─
+    // ── Simulated WhatsApp broadcast ──────────────────────────────
     if (resource === 'broadcast') {
       if (req.method !== 'POST') return badRequest(res, 'POST only');
       const { product_id, message } = req.body || {};

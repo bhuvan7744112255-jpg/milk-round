@@ -47,7 +47,15 @@ function renderAuth() {
     appName: 'Milk Round',
     tagline: 'Fresh milk, delivered before you wake up.',
     markIcon: MILK_MARK,
-    onSuccess: (profile) => { state.profile = profile; renderApp(); },
+    onSuccess: (profile) => {
+      state.profile = profile;
+      if (profile.isExisting) {
+        toast(`Welcome back, ${profile.name || profile.phone}! 👋`);
+      } else {
+        toast('Welcome to Milk Round! 🎉');
+      }
+      renderApp();
+    },
   });
   render(root);
 }
@@ -97,24 +105,30 @@ async function renderHome(screen) {
   screen.appendChild(tiles);
 
   if (!data.zone) {
-    screen.appendChild(el('div', { class: 'card' }, [
-      el('h3', {}, 'Set your address'),
-      el('p', { class: 'muted' }, data.message),
-      el('button', { class: 'btn btn-primary', onclick: () => { state.tab = 'profile'; renderApp(); } }, 'Go to Profile'),
+    screen.appendChild(el('div', { class: 'card tight', style: 'background:var(--amber-soft);border-color:var(--amber);margin-bottom:14px;' }, [
+      el('div', { style: 'display:flex;justify-content:space-between;align-items:center;' }, [
+        el('div', {}, [
+          el('h3', { style: 'margin:0;font-size:15px;' }, '📍 Set your delivery location'),
+          el('p', { class: 'muted small', style: 'margin:2px 0 0;' }, 'Enter your address to enable instant delivery & subscriptions in your area.'),
+        ]),
+        el('button', { class: 'btn btn-primary btn-sm', onclick: () => { state.tab = 'profile'; renderApp(); } }, 'Set Address'),
+      ]),
     ]));
-    return;
-  }
-
-  const hero = el('div', { class: 'hero' });
-  if (data.heroVideos.milk) {
-    hero.appendChild(el('video', { src: data.heroVideos.milk, autoplay: '', muted: '', loop: '', playsinline: '' }));
   } else {
-    hero.style.background = 'linear-gradient(135deg, var(--accent-soft), var(--amber-soft))';
+    const hero = el('div', { class: 'hero' });
+    if (data.heroVideos && data.heroVideos.milk) {
+      hero.appendChild(el('video', { src: data.heroVideos.milk, autoplay: '', muted: '', loop: '', playsinline: '' }));
+    } else {
+      hero.style.background = 'linear-gradient(135deg, var(--accent-soft), var(--amber-soft))';
+    }
+    hero.appendChild(el('div', { class: 'hero-caption' }, [
+      el('h3', {}, `Delivering to ${data.zone.name}`),
+      el('p', { class: 'small', style: 'margin:0;opacity:.9;' }, 'Farm-fresh, every morning.'),
+    ]));
+    screen.appendChild(hero);
   }
-  hero.appendChild(el('div', { class: 'hero-caption' }, [el('h3', {}, `Delivering to ${data.zone.name}`), el('p', { class: 'small', style: 'margin:0;opacity:.9;' }, 'Farm-fresh, every morning.')]));
-  screen.appendChild(hero);
 
-  const offer = data.products.find((p) => p.discount_active);
+  const offer = (data.products || []).find((p) => p.discount_active);
   if (offer) {
     screen.appendChild(el('div', { class: 'card tight', style: 'background:var(--amber-soft);border-color:var(--amber);' }, [
       el('span', { class: 'badge badge-amber' }, `${offer.discount_pct}% OFF`),
@@ -122,24 +136,28 @@ async function renderHome(screen) {
     ]));
   }
 
-  const list = el('div', { class: 'card' }, [el('h3', { style: 'margin-bottom:10px;' }, 'Products')]);
-  data.products.forEach((p) => {
+  const list = el('div', { class: 'card' }, [el('h3', { style: 'margin-bottom:10px;' }, 'Farm Fresh Products')]);
+  (data.products || []).forEach((p) => {
     const price = p.discount_active ? p.price * (1 - p.discount_pct / 100) : p.price;
     const row = el('div', { class: 'list-row' }, [
-      el('div', {}, [el('div', { style: 'font-weight:600;' }, `${p.name} · ${p.pack_size}`), el('div', { class: 'muted small' }, p.discount_active ? el('span', {}, [el('s', {}, rupees(p.price)), ' ', rupees(price)]) : rupees(price))]),
+      el('div', {}, [
+        el('div', { style: 'font-weight:600;' }, `${p.name} · ${p.pack_size || ''}`),
+        el('div', { class: 'muted small' }, p.discount_active ? el('span', {}, [el('s', {}, rupees(p.price)), ' ', rupees(price)]) : rupees(price))
+      ]),
+      el('button', { class: 'btn btn-outline btn-sm', onclick: () => { state.tab = 'sub'; renderApp(); } }, 'Subscribe'),
     ]);
     list.appendChild(row);
   });
   screen.appendChild(list);
 
   if (data.instantAvailable) {
-    const stock = data.stockByProduct;
+    const stock = data.stockByProduct || {};
     const card = el('div', { class: 'card' }, [
       el('div', { style: 'display:flex;align-items:center;justify-content:space-between;' }, [el('h3', {}, 'Instant Delivery'), el('span', { class: 'badge badge-accent' }, 'Available now')]),
       el('p', { class: 'muted small' }, 'Order now, delivered today.'),
     ]);
     const cart = {};
-    data.products.forEach((p) => {
+    (data.products || []).forEach((p) => {
       const avail = stock[p.id] || 0;
       if (avail <= 0) return;
       const row = el('div', { class: 'list-row' });

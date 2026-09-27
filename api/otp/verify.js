@@ -34,6 +34,7 @@ module.exports = async (req, res) => {
 
     if (role === 'customer') {
       let { data: customer } = await db.from('customers').select('*').eq('phone', phone).maybeSingle();
+      const isExisting = !!customer;
       if (!customer) {
         const { data: created, error } = await db
           .from('customers')
@@ -51,11 +52,12 @@ module.exports = async (req, res) => {
         'Set-Cookie',
         createSessionCookie({ sub: customer.id, role: 'customer', phone, name: customer.name })
       );
-      return ok(res, { profile: customer });
+      return ok(res, { profile: { ...customer, isExisting } });
     }
 
     // role === 'partner'
     let { data: partner } = await db.from('delivery_partners').select('*').eq('phone', phone).maybeSingle();
+    const isExistingPartner = !!partner;
     if (!partner) {
       const { data: created, error } = await db
         .from('delivery_partners')
@@ -69,7 +71,7 @@ module.exports = async (req, res) => {
       'Set-Cookie',
       createSessionCookie({ sub: partner.id, role: 'partner', phone, name: partner.name })
     );
-    return ok(res, { profile: partner });
+    return ok(res, { profile: { ...partner, isExisting: isExistingPartner } });
   } catch (err) {
     return serverError(res, err);
   }

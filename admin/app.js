@@ -110,27 +110,37 @@ async function renderRevenue(main) {
     api('/admin/summary'), api('/admin/procurement'), api('/admin/dispatch'), api('/admin/orders'),
   ]);
   main.innerHTML = '';
-  main.appendChild(el('h1', {}, 'Revenue & Orders'));
-  main.appendChild(el('p', { class: 'muted', style: 'margin-bottom:18px;' }, summary.date));
+  main.appendChild(el('h1', {}, 'Revenue & Orders Overview'));
+  main.appendChild(el('p', { class: 'muted', style: 'margin-bottom:18px;' }, `Data for ${summary.date}`));
 
+  main.appendChild(el('h3', { style: 'margin-bottom:10px;' }, '📊 Key Performance Metrics'));
   main.appendChild(el('div', { class: 'stat-grid' }, [
-    statCard('Total orders today', summary.totalOrders),
-    statCard('Not Delivered', summary.ond),
-    statCard('Partially Delivered', summary.pd),
-    statCard('Revenue lost', rupees(summary.revenueLost)),
-    statCard('Revenue realized', rupees(summary.revenueRealized)),
+    statCard('Total Customers', summary.totalCustomers ?? 0),
+    statCard('New Customers (Today / Yest)', `${summary.newCustomersToday ?? 0} / ${summary.newCustomersYesterday ?? 0}`),
+    statCard('Converted Customers', `${summary.convertedCustomersCount ?? 0} (${summary.conversionRate ?? 0}%)`),
+    statCard('Active Subscriptions', summary.activeSubscriptionsCount ?? 0),
+    statCard('Average Order Value (AOV)', rupees(summary.aov ?? 0)),
   ]));
 
-  main.appendChild(el('h2', {}, 'Procurement — tomorrow, all zones'));
-  main.appendChild(dataTable(['Product', 'Units needed'], procurement.map((p) => [p.name, p.units])));
+  main.appendChild(el('h3', { style: 'margin:20px 0 10px;' }, '📦 Today’s Delivery & Revenue Rollup'));
+  main.appendChild(el('div', { class: 'stat-grid' }, [
+    statCard('Total Orders Today', summary.totalOrders),
+    statCard('Not Delivered (OND)', summary.ond),
+    statCard('Partially Delivered (PD)', summary.pd),
+    statCard('Revenue Lost', rupees(summary.revenueLost)),
+    statCard('Revenue Realized', rupees(summary.revenueRealized)),
+  ]));
 
-  main.appendChild(el('h2', { style: 'margin-top:22px;' }, 'Dispatch — tomorrow, by zone'));
+  main.appendChild(el('h2', { style: 'margin-top:24px;' }, 'Procurement — Tomorrow, All Zones'));
+  main.appendChild(dataTable(['Product', 'Units Needed'], procurement.map((p) => [p.name, p.units])));
+
+  main.appendChild(el('h2', { style: 'margin-top:22px;' }, 'Dispatch — Tomorrow, By Zone'));
   main.appendChild(dataTable(
-    ['Zone', 'Product', 'Needed', 'Current stock', 'Status'],
+    ['Zone', 'Product', 'Needed', 'Current Stock', 'Status'],
     dispatch.map((d) => [d.zone_name, d.product_name, d.units_needed, d.current_stock, d.short ? el('span', { class: 'badge badge-danger' }, 'Short') : el('span', { class: 'badge badge-accent' }, 'OK')])
   ));
 
-  main.appendChild(el('h2', { style: 'margin-top:22px;' }, "Today's orders"));
+  main.appendChild(el('h2', { style: 'margin-top:22px;' }, "Today's Orders"));
   const rows = orders.map((o) => {
     const itemsText = (o.items || []).map((i) => `${i.name} ×${i.qty}`).join(', ');
     let action = el('span', { class: 'badge ' + statusBadgeClass(o.status) }, o.status);
@@ -142,7 +152,7 @@ async function renderRevenue(main) {
           let reason;
           if (status === 'Not Delivered') reason = prompt('Reason (gate locked / no answer / subscription paused / wrong address)?') || 'Not specified';
           try {
-            await api(`/admin/orders/${o.id}`, { method: 'PUT', body: { status, reason } });
+            await api('/admin/orders', { method: 'PUT', body: { id: o.id, status, reason } });
             toast('Updated');
             renderApp();
           } catch (e) { toast(e.message, true); }
@@ -193,12 +203,30 @@ async function renderZones(main) {
   main.appendChild(form);
 
   main.appendChild(dataTable(
-    ['Name', 'Pincode', 'Hub coordinates', 'Instant delivery', ''],
+    ['Name', 'Pincode', 'Hub Coordinates', 'Instant Delivery Toggle', 'Actions'],
     zones.map((z) => {
-      const toggle = el('button', { class: 'btn btn-sm ' + (z.instant_delivery_enabled ? 'btn-primary' : 'btn-outline') }, z.instant_delivery_enabled ? 'On' : 'Off');
-      toggle.onclick = async () => { await api(`/admin/zones/${z.id}`, { method: 'PUT', body: { instant_delivery_enabled: !z.instant_delivery_enabled } }); renderApp(); };
+      const toggle = el('button', { class: 'btn btn-sm ' + (z.instant_delivery_enabled ? 'btn-primary' : 'btn-outline') }, z.instant_delivery_enabled ? 'Instant ON' : 'Instant OFF');
+      toggle.onclick = async () => {
+        try {
+          await api('/admin/zones', { method: 'PUT', body: { id: z.id, instant_delivery_enabled: !z.instant_delivery_enabled } });
+          toast(`Instant delivery turned ${!z.instant_delivery_enabled ? 'ON' : 'OFF'}`);
+          renderApp();
+        } catch (e) {
+          toast(e.message, true);
+        }
+      };
       const del = el('button', { class: 'btn btn-outline btn-sm' }, 'Delete');
-      del.onclick = async () => { if (confirm(`Delete ${z.name}?`)) { await api(`/admin/zones/${z.id}`, { method: 'DELETE' }); renderApp(); } };
+      del.onclick = async () => {
+        if (confirm(`Delete zone "${z.name}"?`)) {
+          try {
+            await api('/admin/zones', { method: 'DELETE', body: { id: z.id } });
+            toast('Zone deleted');
+            renderApp();
+          } catch (e) {
+            toast(e.message, true);
+          }
+        }
+      };
       return [z.name, z.pincode || '—', `${z.hub_lat}, ${z.hub_lng}`, toggle, del];
     })
   ));
@@ -229,20 +257,38 @@ async function renderProducts(main) {
     const discInput = el('input', { type: 'number', step: '1', value: p.discount_pct, style: 'width:70px;' });
     const activeToggle = el('button', { class: 'btn btn-sm ' + (p.discount_active ? 'btn-primary' : 'btn-outline') }, p.discount_active ? 'Offer live' : 'No offer');
     let discountActive = p.discount_active;
-    activeToggle.onclick = () => { discountActive = !discountActive; activeToggle.textContent = discountActive ? 'Offer live' : 'No offer'; activeToggle.className = 'btn btn-sm ' + (discountActive ? 'btn-primary' : 'btn-outline'); };
-    const bannerInput = el('input', { placeholder: 'Banner text for the offer', value: p.banner_text || '', style: 'width:100%;margin-top:8px;' });
-    const saveBtn = el('button', { class: 'btn btn-secondary btn-sm', style: 'margin-top:8px;' }, 'Save');
-    saveBtn.onclick = async () => {
-      await api(`/admin/products/${p.id}`, { method: 'PUT', body: { price: Number(priceInput.value), discount_pct: Number(discInput.value), discount_active: discountActive, banner_text: bannerInput.value } });
-      toast('Saved');
+    activeToggle.onclick = () => {
+      discountActive = !discountActive;
+      activeToggle.textContent = discountActive ? 'Offer live' : 'No offer';
+      activeToggle.className = 'btn btn-sm ' + (discountActive ? 'btn-primary' : 'btn-outline');
     };
-    const broadcastBtn = el('button', { class: 'btn btn-amber btn-sm', style: 'margin-top:8px;' }, 'Broadcast offer');
+    const bannerInput = el('input', { placeholder: 'Banner text for the offer', value: p.banner_text || '', style: 'width:100%;margin-top:8px;' });
+    const saveBtn = el('button', { class: 'btn btn-secondary btn-sm', style: 'margin-top:8px;' }, 'Save Offer & Price');
+    saveBtn.onclick = async () => {
+      try {
+        await api('/admin/products', { method: 'PUT', body: { id: p.id, price: Number(priceInput.value), discount_pct: Number(discInput.value), discount_active: discountActive, banner_text: bannerInput.value } });
+        toast('Product updated');
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
+    const broadcastBtn = el('button', { class: 'btn btn-amber btn-sm', style: 'margin-top:8px;' }, 'Broadcast Offer');
     broadcastBtn.onclick = async () => {
       const r = await api('/admin/broadcast', { method: 'POST', body: { product_id: p.id, message: bannerInput.value || `${p.name} is on offer` } });
       toast(r.note || 'Broadcast simulated');
     };
-    const delBtn = el('button', { class: 'btn btn-outline btn-sm', style: 'margin-top:8px;' }, 'Delete');
-    delBtn.onclick = async () => { if (confirm(`Delete ${p.name}?`)) { await api(`/admin/products/${p.id}`, { method: 'DELETE' }); renderApp(); } };
+    const delBtn = el('button', { class: 'btn btn-outline btn-sm', style: 'margin-top:8px;' }, 'Delete Product');
+    delBtn.onclick = async () => {
+      if (confirm(`Delete product "${p.name}"?`)) {
+        try {
+          await api('/admin/products', { method: 'DELETE', body: { id: p.id } });
+          toast('Product deleted');
+          renderApp();
+        } catch (e) {
+          toast(e.message, true);
+        }
+      }
+    };
 
     main.appendChild(el('div', { class: 'card' }, [
       el('div', { style: 'display:flex;justify-content:space-between;align-items:center;' }, [el('h3', {}, `${p.name} · ${p.pack_size || ''}`), activeToggle]),
@@ -284,19 +330,28 @@ async function renderInventory(main) {
     tableWrap.innerHTML = '';
     const card = el('div', { class: 'card' });
     products.forEach((p) => {
-      const input = el('input', { type: 'number', min: '0', value: stockMap[p.id] ?? 0, style: 'width:100px;' });
-      const save = el('button', { class: 'btn btn-secondary btn-sm' }, 'Save');
+      const input = el('input', { type: 'number', min: '0', value: stockMap[p.id] ?? 0, style: 'width:90px;' });
+      const save = el('button', { class: 'btn btn-secondary btn-sm' }, 'Save Stock');
       save.onclick = async () => {
         await api('/admin/inventory', { method: 'POST', body: { zone_id: zoneSelect.value, product_id: p.id, date: dateInput.value, qty_available: Number(input.value) } });
         toast('Stock updated');
       };
-      card.appendChild(el('div', { class: 'list-row' }, [el('span', {}, p.name), el('div', { style: 'display:flex;gap:8px;align-items:center;' }, [input, save])]));
+      const clearOne = el('button', { class: 'btn btn-outline btn-sm' }, 'Clear');
+      clearOne.onclick = async () => {
+        await api('/admin/inventory', { method: 'POST', body: { zone_id: zoneSelect.value, date: dateInput.value, clear_product_id: p.id } });
+        toast(`Cleared stock for ${p.name}`);
+        draw();
+      };
+      card.appendChild(el('div', { class: 'list-row', style: 'padding:8px 0;' }, [
+        el('span', { style: 'font-weight:600;' }, p.name),
+        el('div', { style: 'display:flex;gap:8px;align-items:center;' }, [input, save, clearOne])
+      ]));
     });
-    const clearBtn = el('button', { class: 'btn btn-outline', style: 'margin-top:10px;' }, 'Clear all stock for this zone/date');
+    const clearBtn = el('button', { class: 'btn btn-outline', style: 'margin-top:14px;color:var(--danger);' }, 'Clear ALL stock for this zone/date');
     clearBtn.onclick = async () => {
       if (!confirm('Set every product to zero stock for this zone and date?')) return;
       await api('/admin/inventory', { method: 'POST', body: { zone_id: zoneSelect.value, date: dateInput.value, clear_all: true } });
-      toast('Cleared');
+      toast('All stock cleared');
       draw();
     };
     card.appendChild(clearBtn);
@@ -311,10 +366,10 @@ async function renderInventory(main) {
 async function renderSubscribers(main) {
   const [{ subscribers }, { zones }, { products }] = await Promise.all([api('/admin/subscribers'), api('/admin/zones'), api('/admin/products')]);
   main.innerHTML = '';
-  main.appendChild(el('h1', {}, 'Subscribers'));
+  main.appendChild(el('h1', {}, 'Subscribers & Delivery Addresses'));
 
   const form = el('div', { class: 'card' }, [el('h3', {}, 'Add a subscriber')]);
-  const phone = el('input', { placeholder: 'Phone number' });
+  const phone = el('input', { placeholder: 'Phone number (10 digits)', type: 'tel', maxlength: '10' });
   const name = el('input', { placeholder: 'Name (optional)' });
   const zoneSelect = el('select', {}, zones.map((z) => el('option', { value: z.id }, z.name)));
   const productSelect = el('select', {}, products.map((p) => el('option', { value: p.id }, p.name)));
@@ -322,22 +377,51 @@ async function renderSubscribers(main) {
   const qty = el('input', { type: 'number', min: '1', value: '1', style: 'width:70px;' });
   const addBtn = el('button', { class: 'btn btn-primary', style: 'margin-top:8px;' }, 'Add subscriber');
   addBtn.onclick = async () => {
-    if (!phone.value) return toast('Phone number is required', true);
-    await api('/admin/subscribers', { method: 'POST', body: { phone: phone.value, name: name.value, zone_id: zoneSelect.value, product_id: productSelect.value, plan: planSelect.value, qty_per_day: Number(qty.value) } });
-    toast('Subscriber added');
-    renderApp();
+    if (!phone.value || phone.value.replace(/\D/g, '').length !== 10) {
+      return toast('Valid 10-digit phone number is required', true);
+    }
+    try {
+      await api('/admin/subscribers', { method: 'POST', body: { phone: phone.value, name: name.value, zone_id: zoneSelect.value, product_id: productSelect.value, plan: planSelect.value, qty_per_day: Number(qty.value) } });
+      toast('Subscriber added');
+      renderApp();
+    } catch (e) {
+      toast(e.message, true);
+    }
   };
   form.append(phone, name, zoneSelect, productSelect, planSelect, qty, addBtn);
   main.appendChild(form);
 
   main.appendChild(dataTable(
-    ['Customer', 'Zone', 'Product', 'Plan', 'Qty/day', 'Status', ''],
+    ['Customer Name', 'Phone & Delivery Address', 'Zone', 'Product', 'Plan', 'Qty/day', 'Status', 'Actions'],
     subscribers.map((s) => {
       const statusSelect = el('select', {}, ['Active', 'Paused', 'Cancelled'].map((st) => el('option', { value: st, selected: s.status === st ? '' : undefined }, st)));
-      statusSelect.onchange = async () => { await api(`/admin/subscribers/${s.id}`, { method: 'PUT', body: { status: statusSelect.value } }); toast('Updated'); };
+      statusSelect.onchange = async () => {
+        try {
+          await api('/admin/subscribers', { method: 'PUT', body: { id: s.id, status: statusSelect.value } });
+          toast('Status updated');
+        } catch (e) {
+          toast(e.message, true);
+        }
+      };
       const del = el('button', { class: 'btn btn-outline btn-sm' }, 'Delete');
-      del.onclick = async () => { if (confirm('Delete this subscription?')) { await api(`/admin/subscribers/${s.id}`, { method: 'DELETE' }); renderApp(); } };
-      return [s.customers?.name || s.customers?.phone || '—', s.zones?.name, s.products?.name, s.plan, s.qty_per_day, statusSelect, del];
+      del.onclick = async () => {
+        if (confirm('Delete this subscription?')) {
+          try {
+            await api('/admin/subscribers', { method: 'DELETE', body: { id: s.id } });
+            toast('Subscription deleted');
+            renderApp();
+          } catch (e) {
+            toast(e.message, true);
+          }
+        }
+      };
+
+      const custDetails = el('div', {}, [
+        el('div', { style: 'font-weight:600;' }, s.customers?.phone || '—'),
+        el('div', { class: 'small muted', style: 'max-width:260px;word-break:break-word;' }, s.customers?.address_text || '⚠️ Address not set yet'),
+      ]);
+
+      return [s.customers?.name || 'Customer', custDetails, s.zones?.name, s.products?.name, s.plan, s.qty_per_day, statusSelect, del];
     })
   ));
 }
@@ -348,26 +432,50 @@ async function renderPartners(main) {
   main.innerHTML = '';
   main.appendChild(el('h1', {}, 'Delivery Partners'));
 
-  const form = el('div', { class: 'card' }, [el('h3', {}, 'Add a partner')]);
-  const name = el('input', { placeholder: 'Name' });
-  const phone = el('input', { placeholder: 'Phone number' });
+  const form = el('div', { class: 'card' }, [el('h3', {}, 'Add a delivery partner')]);
+  const name = el('input', { placeholder: 'Partner name' });
+  const phone = el('input', { placeholder: '10-digit mobile number', type: 'tel', maxlength: '10', inputmode: 'numeric' });
   const addBtn = el('button', { class: 'btn btn-primary', style: 'margin-top:8px;' }, 'Add partner');
   addBtn.onclick = async () => {
-    if (!name.value || !phone.value) return toast('Name and phone are required', true);
-    await api('/admin/partners', { method: 'POST', body: { name: name.value, phone: phone.value, zone_ids: [], status: 'active' } });
-    toast('Partner added');
-    renderApp();
+    const cleanPhone = phone.value.replace(/\D/g, '');
+    if (!name.value || cleanPhone.length !== 10) {
+      return toast('Please enter a name and a valid 10-digit phone number', true);
+    }
+    try {
+      await api('/admin/partners', { method: 'POST', body: { name: name.value, phone: cleanPhone, zone_ids: [], status: 'active' } });
+      toast('Partner added');
+      renderApp();
+    } catch (e) {
+      toast(e.message, true);
+    }
   };
   form.append(name, phone, addBtn);
   main.appendChild(form);
 
   main.appendChild(dataTable(
-    ['Name', 'Phone', 'Active zone', 'Status', ''],
+    ['Name', 'Phone Number', 'Active Zone', 'Status', 'Actions'],
     partners.map((p) => {
       const statusToggle = el('button', { class: 'btn btn-sm ' + (p.status === 'active' ? 'btn-primary' : 'btn-outline') }, p.status);
-      statusToggle.onclick = async () => { await api(`/admin/partners/${p.id}`, { method: 'PUT', body: { status: p.status === 'active' ? 'inactive' : 'active' } }); renderApp(); };
+      statusToggle.onclick = async () => {
+        try {
+          await api('/admin/partners', { method: 'PUT', body: { id: p.id, status: p.status === 'active' ? 'inactive' : 'active' } });
+          renderApp();
+        } catch (e) {
+          toast(e.message, true);
+        }
+      };
       const del = el('button', { class: 'btn btn-outline btn-sm' }, 'Delete');
-      del.onclick = async () => { if (confirm(`Delete ${p.name}?`)) { await api(`/admin/partners/${p.id}`, { method: 'DELETE' }); renderApp(); } };
+      del.onclick = async () => {
+        if (confirm(`Delete delivery partner "${p.name}"?`)) {
+          try {
+            await api('/admin/partners', { method: 'DELETE', body: { id: p.id } });
+            toast('Partner deleted');
+            renderApp();
+          } catch (e) {
+            toast(e.message, true);
+          }
+        }
+      };
       return [p.name, p.phone, p.zones?.name || '—', statusToggle, del];
     })
   ));
@@ -377,7 +485,7 @@ async function renderPartners(main) {
 async function renderExceptions(main) {
   const { exceptions } = await api('/admin/exceptions');
   main.innerHTML = '';
-  main.appendChild(el('h1', {}, 'Exceptions'));
+  main.appendChild(el('h1', {}, 'Exceptions Log'));
   main.appendChild(dataTable(
     ['Date', 'Customer', 'Zone', 'Reason'],
     exceptions.map((e) => [e.date, e.customers?.name || e.customers?.phone || '—', e.zones?.name || '—', e.reason])

@@ -8,6 +8,7 @@ const ICONS = {
   earnings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9 9.5c0-1.4 1.3-2.5 3-2.5s3 1 3 2.2-1.3 1.8-3 2-3 .8-3 2 1.3 2.3 3 2.3 3-1 3-2.3"/></svg>',
   profile: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>',
   nav: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>',
+  qr: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>',
 };
 const REASONS = ['Gate locked', 'No answer', 'Subscription paused', 'Wrong address'];
 
@@ -49,13 +50,15 @@ function renderAuth() {
 // ── App shell ───────────────────────────────────────────────────────
 function renderApp() {
   root.innerHTML = '';
+  const titles = { route: 'Today’s Route', earnings: 'Earnings', profile: 'Partner Profile', referral: 'Promote & QR' };
   const topbar = el('div', { class: 'topbar' }, [
-    el('div', { class: 'brand' }, [el('div', { class: 'mark' }, 'M'), el('h2', {}, 'Today\u2019s Route')]),
+    el('div', { class: 'brand' }, [el('div', { class: 'mark' }, 'M'), el('h2', {}, titles[state.tab] || 'Partner App')]),
   ]);
   const screen = el('div', { class: 'screen', id: 'screen' });
   const nav = el('div', { class: 'bottomnav' }, [
     navBtn('route', 'Route', ICONS.route),
     navBtn('earnings', 'Earnings', ICONS.earnings),
+    navBtn('referral', 'Promote', ICONS.qr),
     navBtn('profile', 'Profile', ICONS.profile),
   ]);
   root.append(topbar, screen, nav);
@@ -70,7 +73,25 @@ function navBtn(tab, label, icon) {
 
 function renderTab() {
   const screen = document.getElementById('screen');
-  runScreen(screen, { route: renderRoute, earnings: renderEarnings, profile: renderProfile }[state.tab]);
+  runScreen(screen, { route: renderRoute, earnings: renderEarnings, referral: renderReferral, profile: renderProfile }[state.tab]);
+}
+
+async function renderReferral(screen) {
+  screen.innerHTML = '';
+  const partnerPhone = state.profile?.phone || '';
+  const customerAppUrl = `${window.location.origin}/customer?ref=${partnerPhone}`;
+  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(customerAppUrl)}`;
+
+  screen.appendChild(el('div', { class: 'card', style: 'text-align:center;padding:24px 16px;' }, [
+    el('h2', { style: 'margin-bottom:6px;' }, 'Promote & Earn Rewards 🎁'),
+    el('p', { class: 'muted small', style: 'margin-bottom:18px;' }, 'Show this QR code to interested customers. When they scan and subscribe, you get a referral bonus!'),
+    el('img', { src: qrCodeUrl, alt: 'Referral QR Code', style: 'width:200px;height:200px;border-radius:12px;border:1px solid var(--border);margin:0 auto;' }),
+    el('p', { class: 'small muted', style: 'margin-top:14px;font-weight:600;' }, `Your Partner ID: ${partnerPhone}`),
+    el('button', { class: 'btn btn-outline btn-sm', style: 'margin-top:12px;', onclick: () => {
+      navigator.clipboard.writeText(customerAppUrl);
+      toast('Customer referral link copied!');
+    }}, 'Copy Customer Link'),
+  ]));
 }
 
 // ── Route ───────────────────────────────────────────────────────────
