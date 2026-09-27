@@ -12,7 +12,8 @@ module.exports = async (req, res) => {
   const session = requireRole(req, 'partner');
   if (!session) return unauthorized(res);
   const db = supabaseAdmin();
-  const action = (req.query.action || [])[0];
+  const rawAction = req.query.action;
+  const action = Array.isArray(rawAction) ? rawAction[0] : (typeof rawAction === 'string' ? rawAction : '');
 
   try {
     // ── /api/partner/me ────────────────────────────────────────────────

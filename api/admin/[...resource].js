@@ -7,7 +7,11 @@ module.exports = async (req, res) => {
   const session = requireRole(req, 'admin');
   if (!session) return unauthorized(res);
   const db = supabaseAdmin();
-  const [resource, id] = req.query.resource || [];
+  const rawResource = req.query.resource;
+  const resourceParts = Array.isArray(rawResource)
+    ? rawResource
+    : (typeof rawResource === 'string' ? [rawResource] : []);
+  const [resource, id] = resourceParts;
 
   try {
     // ── Zones ────────────────────────────────────────────────────────
