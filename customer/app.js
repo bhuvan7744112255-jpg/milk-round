@@ -338,30 +338,57 @@ function orderCard(o) {
 // ── Profile ─────────────────────────────────────────────────────────
 async function renderProfile(screen) {
   const { customer, zone } = await api('/customer/me');
-  const zonesRes = await api('/customer/home').catch(() => ({}));
+  const homeData = await api('/customer/home').catch(() => ({}));
   screen.innerHTML = '';
-  const card = el('div', { class: 'card' }, [el('h3', {}, 'Your details')]);
-  const nameInput = el('input', { type: 'text', value: customer.name || '', placeholder: 'Full name' });
-  const addrInput = el('textarea', { rows: '2', placeholder: 'Address' }, customer.address_text || '');
-  const gpsBtn = el('button', { class: 'btn btn-outline', style: 'margin-top:10px;' }, zone ? `📍 ${zone.name}` : '📍 Capture my location');
-  let lat = customer.lat, lng = customer.lng;
+  const card = el('div', { class: 'card' }, [el('h3', {}, 'Delivery Address & Profile')]);
+  const nameInput = el('input', { type: 'text', value: customer.name || '', placeholder: 'Full Name' });
+  const addrInput = el('textarea', { rows: '3', placeholder: 'Flat / House No, Street, Landmark, Pincode' }, customer.address_text || '');
+
+  let lat = customer.lat, lng = customer.lng, selectedZoneId = customer.zone_id;
+
+  const gpsBtn = el('button', { class: 'btn btn-outline', style: 'margin-top:10px;' }, zone ? `📍 Current Zone: ${zone.name}` : '📍 Auto-detect My Location (GPS)');
   gpsBtn.onclick = () => {
     if (!navigator.geolocation) return toast('Geolocation not supported on this device', true);
     gpsBtn.textContent = 'Locating…';
     navigator.geolocation.getCurrentPosition(
-      (pos) => { lat = pos.coords.latitude; lng = pos.coords.longitude; gpsBtn.textContent = '📍 Location captured'; toast('Location captured — save to confirm'); },
-      () => { toast('Could not get location', true); gpsBtn.textContent = '📍 Capture my location'; }
+      (pos) => {
+        lat = pos.coords.latitude;
+        lng = pos.coords.longitude;
+        gpsBtn.textContent = `📍 Location Captured (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+        toast('GPS Location captured — Save to confirm');
+      },
+      () => { toast('Could not detect GPS location. You can select your zone manually below.', true); gpsBtn.textContent = '📍 Auto-detect My Location'; }
     );
   };
-  const saveBtn = el('button', { class: 'btn btn-primary', style: 'margin-top:14px;' }, 'Save changes');
-  saveBtn.onclick = async () => {
-    await api('/customer/me', { method: 'PATCH', body: { name: nameInput.value, address_text: addrInput.value, lat, lng } });
-    toast('Saved');
+
+  const mapPinBtn = el('button', { class: 'btn btn-outline', style: 'margin-top:8px;' }, '🗺️ Manual Location Coordinates');
+  mapPinBtn.onclick = () => {
+    const latStr = prompt('Enter Latitude (or leave blank to keep current):', lat || '17.4326');
+    const lngStr = prompt('Enter Longitude (or leave blank to keep current):', lng || '78.4071');
+    if (latStr && lngStr) {
+      lat = Number(latStr);
+      lng = Number(lngStr);
+      toast(`Coordinates set to ${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+    }
   };
-  card.append(nameInput, addrInput, gpsBtn, saveBtn);
+
+  const saveBtn = el('button', { class: 'btn btn-primary', style: 'margin-top:16px;' }, 'Save Address & Location');
+  saveBtn.onclick = async () => {
+    if (!addrInput.value.trim()) return toast('Please enter your delivery address', true);
+    try {
+      await api('/customer/me', { method: 'PATCH', body: { name: nameInput.value, address_text: addrInput.value, lat, lng, zone_id: selectedZoneId } });
+      toast('Address & Location saved!');
+      state.tab = 'home';
+      renderApp();
+    } catch (e) {
+      toast(e.message, true);
+    }
+  };
+
+  card.append(nameInput, addrInput, gpsBtn, mapPinBtn, saveBtn);
   screen.appendChild(card);
 
-  const logoutBtn = el('button', { class: 'btn btn-outline' }, 'Log out');
+  const logoutBtn = el('button', { class: 'btn btn-outline', style: 'color:var(--danger);' }, 'Log out');
   logoutBtn.onclick = () => { document.cookie = 'mr_session=; Max-Age=0; path=/'; location.reload(); };
   screen.appendChild(el('div', { class: 'card' }, [logoutBtn]));
 }

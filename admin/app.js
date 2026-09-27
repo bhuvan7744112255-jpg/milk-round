@@ -17,16 +17,16 @@ async function boot() {
     await api('/admin/zones');
     renderApp();
   } catch (err) {
-    if (err.status === 401 || err.status === 403) {
+    if (err.status === 401 || err.status === 403 || (err.message && err.message.toLowerCase().includes('unauthorized'))) {
       renderAuth();
     } else {
       console.error('Boot failed:', err);
       root.innerHTML = '';
       root.appendChild(
         el('div', { class: 'load-error', style: 'min-height:100vh;justify-content:center;' }, [
-          el('h3', {}, 'Couldn\u2019t reach Milk Round'),
-          el('p', {}, err.message || 'Check your connection and try again.'),
-          el('button', { class: 'btn btn-primary', style: 'width:auto;padding:11px 24px;', onclick: boot }, 'Retry'),
+          el('h3', {}, 'Admin Session Expired'),
+          el('p', {}, 'Please sign in to access the Admin Dashboard.'),
+          el('button', { class: 'btn btn-primary', style: 'width:auto;padding:11px 24px;', onclick: renderAuth }, 'Sign In'),
         ])
       );
     }
@@ -203,18 +203,21 @@ async function renderZones(main) {
   main.appendChild(form);
 
   main.appendChild(dataTable(
-    ['Name', 'Pincode', 'Hub Coordinates', 'Instant Delivery Toggle', 'Actions'],
+    ['Name', 'Pincode', 'Hub Coordinates', 'Instant Delivery Status', 'Actions'],
     zones.map((z) => {
-      const toggle = el('button', { class: 'btn btn-sm ' + (z.instant_delivery_enabled ? 'btn-primary' : 'btn-outline') }, z.instant_delivery_enabled ? 'Instant ON' : 'Instant OFF');
+      const isLive = !!z.instant_delivery_enabled;
+      const statusBadge = el('span', { class: 'badge ' + (isLive ? 'badge-accent' : 'badge-muted') }, isLive ? '🟢 ACTIVE' : '⚪ INACTIVE');
+      const toggle = el('button', { class: 'btn btn-sm ' + (isLive ? 'btn-outline' : 'btn-primary'), style: 'margin-left:8px;' }, isLive ? 'Turn OFF' : 'Turn ON');
       toggle.onclick = async () => {
         try {
-          await api('/admin/zones', { method: 'PUT', body: { id: z.id, instant_delivery_enabled: !z.instant_delivery_enabled } });
-          toast(`Instant delivery turned ${!z.instant_delivery_enabled ? 'ON' : 'OFF'}`);
+          await api('/admin/zones', { method: 'PUT', body: { id: z.id, instant_delivery_enabled: !isLive } });
+          toast(`Instant delivery is now ${!isLive ? 'ACTIVE' : 'INACTIVE'}`);
           renderApp();
         } catch (e) {
           toast(e.message, true);
         }
       };
+      const toggleCol = el('div', { style: 'display:flex;align-items:center;' }, [statusBadge, toggle]);
       const del = el('button', { class: 'btn btn-outline btn-sm' }, 'Delete');
       del.onclick = async () => {
         if (confirm(`Delete zone "${z.name}"?`)) {
@@ -227,7 +230,7 @@ async function renderZones(main) {
           }
         }
       };
-      return [z.name, z.pincode || '—', `${z.hub_lat}, ${z.hub_lng}`, toggle, del];
+      return [z.name, z.pincode || '—', `${z.hub_lat}, ${z.hub_lng}`, toggleCol, del];
     })
   ));
 }

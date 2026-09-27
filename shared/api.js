@@ -98,7 +98,9 @@ const MR = (() => {
   // errors are logged, shown, and recoverable with one tap instead of a
   // forced app restart.
   function runScreen(container, renderFn) {
-    container.innerHTML = '<div class="center-fill"><div class="spinner"></div></div>';
+    if (!container.children || container.children.length === 0) {
+      container.innerHTML = '<div class="center-fill"><div class="spinner"></div></div>';
+    }
     Promise.resolve()
       .then(() => renderFn(container))
       .catch((err) => {

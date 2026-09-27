@@ -64,16 +64,24 @@ module.exports = async (req, res) => {
     // ── /api/customer/home ────────────────────────────────────────────
     if (action === 'home') {
       const { data: customer } = await db.from('customers').select('*').eq('id', session.sub).single();
-      if (!customer.zone_id) {
+      const { data: products } = await db.from('products').select('*').order('name');
+      const defaultMilkVideo = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
+      const heroVideos = {
+        milk: process.env.MILK_VIDEO_URL || defaultMilkVideo,
+        other: process.env.VEGETABLE_VIDEO_URL || '',
+      };
+
+      if (!customer || !customer.zone_id) {
         return ok(res, {
           zone: null,
-          products: [],
+          products: products || [],
           instantAvailable: false,
-          message: 'Set your address to see products in your area.',
+          stockByProduct: {},
+          heroVideos,
+          message: 'Set your delivery address to view stock & enable delivery in your area.',
         });
       }
       const { data: zone } = await db.from('zones').select('*').eq('id', customer.zone_id).single();
-      const { data: products } = await db.from('products').select('*').order('name');
       const { data: todaysStock } = await db
         .from('inventory')
         .select('*')
@@ -83,13 +91,10 @@ module.exports = async (req, res) => {
       const instantAvailable = !!zone.instant_delivery_enabled && anyStock;
       return ok(res, {
         zone,
-        products,
+        products: products || [],
         instantAvailable,
         stockByProduct: Object.fromEntries((todaysStock || []).map((r) => [r.product_id, r.qty_available])),
-        heroVideos: {
-          milk: process.env.MILK_VIDEO_URL || '',
-          other: process.env.VEGETABLE_VIDEO_URL || '',
-        },
+        heroVideos,
       });
     }
 
