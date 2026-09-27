@@ -1,7 +1,7 @@
 const { requireRole } = require('../../lib/session');
 const { supabaseAdmin } = require('../../lib/supabaseAdmin');
 const { confirmPayment } = require('../../lib/razorpay');
-const { cycleDaysFor, todayISO, ok, badRequest, unauthorized, serverError, parsePathParams } = require('../../lib/util');
+const { haversineKm, cycleDaysFor, todayISO, ok, badRequest, unauthorized, serverError, parsePathParams } = require('../../lib/util');
 
 async function chargeAmount(db, session, amount, payment_method, proof, note) {
   if (payment_method === 'wallet') {

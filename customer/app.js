@@ -341,9 +341,29 @@ async function renderProfile(screen) {
   const { customer, zone } = await api('/customer/me');
   const homeData = await api('/customer/home').catch(() => ({}));
   screen.innerHTML = '';
+
   const card = el('div', { class: 'card' }, [el('h3', {}, 'Delivery Address & Profile')]);
   const nameInput = el('input', { type: 'text', value: customer.name || '', placeholder: 'Full Name' });
-  const addrInput = el('textarea', { rows: '3', placeholder: 'Flat / House No, Street, Landmark, Pincode' }, customer.address_text || '');
+
+  // Structured address fields for full clarity for the delivery partner
+  const houseInput = el('input', { type: 'text', placeholder: 'Flat / House / Door No. (e.g. Flat 302, Block B)', style: 'margin-top:8px;' });
+  const bldgInput = el('input', { type: 'text', placeholder: 'Apartment / Building Name (e.g. Jubilee Heights)', style: 'margin-top:8px;' });
+  const streetInput = el('input', { type: 'text', placeholder: 'Street / Area / Landmark (e.g. Near Metro Pillar 14)', style: 'margin-top:8px;' });
+  const pinInput = el('input', { type: 'text', placeholder: 'Pincode (6 digits)', maxlength: '6', inputmode: 'numeric', style: 'margin-top:8px;' });
+
+  const fullAddrTextarea = el('textarea', { rows: '3', placeholder: 'Full Manual Address (used by delivery partner for accurate delivery)', style: 'margin-top:8px;' }, customer.address_text || '');
+
+  function updateCombinedAddress() {
+    const parts = [houseInput.value.trim(), bldgInput.value.trim(), streetInput.value.trim(), pinInput.value.trim()].filter(Boolean);
+    if (parts.length > 0) {
+      fullAddrTextarea.value = parts.join(', ');
+    }
+  }
+
+  houseInput.oninput = updateCombinedAddress;
+  bldgInput.oninput = updateCombinedAddress;
+  streetInput.oninput = updateCombinedAddress;
+  pinInput.oninput = updateCombinedAddress;
 
   let lat = customer.lat, lng = customer.lng, selectedZoneId = customer.zone_id;
 
@@ -356,16 +376,16 @@ async function renderProfile(screen) {
         lat = pos.coords.latitude;
         lng = pos.coords.longitude;
         gpsBtn.textContent = `📍 Location Captured (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
-        toast('GPS Location captured — Save to confirm');
+        toast('GPS Location captured');
       },
-      () => { toast('Could not detect GPS location. You can select your zone manually below.', true); gpsBtn.textContent = '📍 Auto-detect My Location'; }
+      () => { toast('Could not detect GPS location. Full manual address above will be used for delivery.', true); gpsBtn.textContent = '📍 Auto-detect My Location'; }
     );
   };
 
-  const mapPinBtn = el('button', { class: 'btn btn-outline', style: 'margin-top:8px;' }, '🗺️ Manual Location Coordinates');
+  const mapPinBtn = el('button', { class: 'btn btn-outline', style: 'margin-top:8px;' }, '🗺️ Manual GPS Coordinates');
   mapPinBtn.onclick = () => {
-    const latStr = prompt('Enter Latitude (or leave blank to keep current):', lat || '17.4326');
-    const lngStr = prompt('Enter Longitude (or leave blank to keep current):', lng || '78.4071');
+    const latStr = prompt('Enter Latitude:', lat || '17.4326');
+    const lngStr = prompt('Enter Longitude:', lng || '78.4071');
     if (latStr && lngStr) {
       lat = Number(latStr);
       lng = Number(lngStr);
@@ -375,10 +395,16 @@ async function renderProfile(screen) {
 
   const saveBtn = el('button', { class: 'btn btn-primary', style: 'margin-top:16px;' }, 'Save Address & Location');
   saveBtn.onclick = async () => {
-    if (!addrInput.value.trim()) return toast('Please enter your delivery address', true);
+    let finalAddress = fullAddrTextarea.value.trim();
+    const parts = [houseInput.value.trim(), bldgInput.value.trim(), streetInput.value.trim(), pinInput.value.trim()].filter(Boolean);
+    if (parts.length > 0 && (!finalAddress || parts.join(', ') !== finalAddress)) {
+      finalAddress = parts.join(', ');
+    }
+    if (!finalAddress) return toast('Please enter your house/flat no and delivery address', true);
+
     try {
-      await api('/customer/me', { method: 'PATCH', body: { name: nameInput.value, address_text: addrInput.value, lat, lng, zone_id: selectedZoneId } });
-      toast('Address & Location saved!');
+      await api('/customer/me', { method: 'PATCH', body: { name: nameInput.value, address_text: finalAddress, lat, lng, zone_id: selectedZoneId } });
+      toast('Address saved!');
       state.tab = 'home';
       renderApp();
     } catch (e) {
@@ -386,7 +412,12 @@ async function renderProfile(screen) {
     }
   };
 
-  card.append(nameInput, addrInput, gpsBtn, mapPinBtn, saveBtn);
+  card.append(
+    el('label', { class: 'small muted' }, 'NAME'), nameInput,
+    el('label', { class: 'small muted', style: 'margin-top:12px;display:block;' }, 'FULL DELIVERY ADDRESS'),
+    houseInput, bldgInput, streetInput, pinInput, fullAddrTextarea,
+    gpsBtn, mapPinBtn, saveBtn
+  );
   screen.appendChild(card);
 
   const logoutBtn = el('button', { class: 'btn btn-outline', style: 'color:var(--danger);' }, 'Log out');
