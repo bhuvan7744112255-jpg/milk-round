@@ -1,0 +1,14 @@
+{
+  "cleanUrls": true,
+  "rewrites": [
+    { "source": "/customer", "destination": "/customer/index.html" },
+    { "source": "/partner", "destination": "/partner/index.html" },
+    { "source": "/admin", "destination": "/admin/index.html" }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/generate-daily-orders",
+      "schedule": "30 22 * * *"
+    }
+  ]
+}
