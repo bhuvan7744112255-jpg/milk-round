@@ -206,11 +206,12 @@ async function placeInstantOrder(cart, products) {
 async function renderSubscribe(screen) {
   const [{ subscriptions }, home] = await Promise.all([api('/customer/subscription'), api('/customer/home')]);
   screen.innerHTML = '';
-  if (!home.zone) {
-    screen.appendChild(el('div', { class: 'card' }, [el('p', {}, 'Set your address in Profile before subscribing.')]));
+  const activeZone = home.zone || (home.zones && home.zones[0]);
+  if (!activeZone) {
+    screen.appendChild(el('div', { class: 'card' }, [el('p', {}, 'No delivery zones are configured in your system yet. Please contact support.')]));
     return;
   }
-  const product = home.products.find((p) => p.name.toLowerCase().includes('full cream')) || home.products[0];
+  const product = (home.products || []).find((p) => p.name.toLowerCase().includes('full cream')) || (home.products || [])[0];
   if (!product) {
     screen.appendChild(el('div', { class: 'card' }, [el('p', {}, 'No products are set up yet — check back soon.')]));
     return;

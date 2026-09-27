@@ -43,12 +43,37 @@ module.exports = async (req, res) => {
       }
       if (req.method === 'PATCH') {
         const { name, address_text, lat, lng, zone_id } = req.body || {};
+        const { data: customer } = await db.from('customers').select('*').eq('id', session.sub).single();
         const patch = {};
         if (name !== undefined) patch.name = name;
         if (address_text !== undefined) patch.address_text = address_text;
-        if (lat !== undefined) patch.lat = lat;
-        if (lng !== undefined) patch.lng = lng;
+        if (lat !== undefined) patch.lat = Number(lat);
+        if (lng !== undefined) patch.lng = Number(lng);
         if (zone_id !== undefined) patch.zone_id = zone_id;
+
+        // Auto-detect nearest zone if not explicitly specified
+        if (!patch.zone_id) {
+          const { data: zones } = await db.from('zones').select('*');
+          if (zones && zones.length > 0) {
+            const currentLat = patch.lat ?? customer.lat;
+            const currentLng = patch.lng ?? customer.lng;
+            if (currentLat !== undefined && currentLng !== undefined && currentLat !== null && currentLng !== null) {
+              let nearest = zones[0];
+              let minDist = haversineKm(nearest.hub_lat, nearest.hub_lng, Number(currentLat), Number(currentLng));
+              zones.forEach((z) => {
+                const dist = haversineKm(z.hub_lat, z.hub_lng, Number(currentLat), Number(currentLng));
+                if (dist < minDist) {
+                  minDist = dist;
+                  nearest = z;
+                }
+              });
+              patch.zone_id = nearest.id;
+            } else if (!customer.zone_id) {
+              patch.zone_id = zones[0].id;
+            }
+          }
+        }
+
         const { data, error } = await db
           .from('customers')
           .update(patch)
@@ -65,32 +90,45 @@ module.exports = async (req, res) => {
     if (action === 'home') {
       const { data: customer } = await db.from('customers').select('*').eq('id', session.sub).single();
       const { data: products } = await db.from('products').select('*').order('name');
+      const { data: allZones } = await db.from('zones').select('*').order('name');
+
       const defaultMilkVideo = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
       const heroVideos = {
         milk: process.env.MILK_VIDEO_URL || defaultMilkVideo,
         other: process.env.VEGETABLE_VIDEO_URL || '',
       };
 
-      if (!customer || !customer.zone_id) {
+      let activeZone = null;
+      if (customer.zone_id) {
+        const { data: z } = await db.from('zones').select('*').eq('id', customer.zone_id).single();
+        activeZone = z;
+      } else if (allZones && allZones.length > 0) {
+        // Auto fallback to first zone if customer hasn't chosen one
+        activeZone = allZones[0];
+      }
+
+      if (!activeZone) {
         return ok(res, {
           zone: null,
+          zones: allZones || [],
           products: products || [],
           instantAvailable: false,
           stockByProduct: {},
           heroVideos,
-          message: 'Set your delivery address to view stock & enable delivery in your area.',
+          message: 'No delivery zones set up yet.',
         });
       }
-      const { data: zone } = await db.from('zones').select('*').eq('id', customer.zone_id).single();
+
       const { data: todaysStock } = await db
         .from('inventory')
         .select('*')
-        .eq('zone_id', zone.id)
+        .eq('zone_id', activeZone.id)
         .eq('date', todayISO());
       const anyStock = (todaysStock || []).some((r) => r.qty_available > 0);
-      const instantAvailable = !!zone.instant_delivery_enabled && anyStock;
+      const instantAvailable = !!activeZone.instant_delivery_enabled && anyStock;
       return ok(res, {
-        zone,
+        zone: activeZone,
+        zones: allZones || [],
         products: products || [],
         instantAvailable,
         stockByProduct: Object.fromEntries((todaysStock || []).map((r) => [r.product_id, r.qty_available])),
@@ -110,7 +148,17 @@ module.exports = async (req, res) => {
         if (!product_id || !plan || !qty_per_day) return badRequest(res, 'product_id, plan, qty_per_day required');
 
         const { data: customer } = await db.from('customers').select('*').eq('id', session.sub).single();
-        if (!customer.zone_id) return badRequest(res, 'Set your delivery zone before subscribing');
+        let targetZoneId = customer.zone_id;
+
+        if (!targetZoneId) {
+          const { data: zones } = await db.from('zones').select('*');
+          if (zones && zones.length > 0) {
+            targetZoneId = zones[0].id;
+            await db.from('customers').update({ zone_id: targetZoneId }).eq('id', customer.id);
+          } else {
+            return badRequest(res, 'No delivery zones available in system');
+          }
+        }
 
         const { data: product } = await db.from('products').select('*').eq('id', product_id).single();
         if (!product) return badRequest(res, 'Unknown product');
@@ -160,7 +208,7 @@ module.exports = async (req, res) => {
         const row = {
           customer_id: session.sub,
           product_id,
-          zone_id: customer.zone_id,
+          zone_id: targetZoneId,
           plan,
           qty_per_day,
           cycle_days,
